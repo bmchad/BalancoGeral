@@ -1,0 +1,320 @@
+import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { TrendingUp, TrendingDown, DollarSign, Info } from 'lucide-react';
+
+export default function Dashboard() {
+  const [ano, setAno] = useState(new Date().getFullYear().toString());
+  const [entradas, setEntradas] = useState(0);
+  const [saidas, setSaidas] = useState(0);
+  const [mesesAtivos, setMesesAtivos] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [latestTransaction, setLatestTransaction] = useState<any>(null);
+  
+  // Notas state
+  const [nota, setNota] = useState('');
+  const [notaSaving, setNotaSaving] = useState(false);
+
+  useEffect(() => {
+    fetchDashboardData();
+    fetchNota();
+  }, [ano]);
+
+  const fetchNota = async () => {
+    try {
+      const user = (await supabase.auth.getUser()).data.user;
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('memory')
+        .select('content')
+        .eq('user_id', user.id)
+        .single();
+      
+      // Error PGRST116 occurs when 0 rows are returned, which is fine for new users
+      if (error && error.code !== 'PGRST116') throw error;
+      if (data) setNota(data.content || '');
+    } catch (err) {
+      console.error("Erro ao buscar nota:", err);
+    }
+  };
+
+  const saveNota = async (newText: string) => {
+    setNota(newText);
+    setNotaSaving(true);
+    try {
+      const user = (await supabase.auth.getUser()).data.user;
+      if (!user) return;
+
+      const { data: existing } = await supabase.from('memory').select('id').eq('user_id', user.id).single();
+
+      if (existing) {
+        await supabase.from('memory').update({ content: newText, updated_at: new Date().toISOString() }).eq('id', existing.id);
+      } else {
+        await supabase.from('memory').insert([{ user_id: user.id, content: newText }]);
+      }
+    } catch (err) {
+      console.error("Erro ao salvar nota:", err);
+    } finally {
+      setNotaSaving(false);
+    }
+  };
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      const user = (await supabase.auth.getUser()).data.user;
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('pendente', false)
+        .gte('data', `${ano}-01-01`)
+        .lte('data', `${ano}-12-31`);
+
+      if (error) throw error;
+
+      let inTotal = 0;
+      let outTotal = 0;
+      const uniqueMonths = new Set();
+
+      data?.forEach(t => {
+        if (t.valor >= 0) inTotal += Number(t.valor);
+        else outTotal += Math.abs(Number(t.valor));
+        
+        if (t.data) {
+          uniqueMonths.add(t.data.substring(0, 7)); // YYYY-MM
+        }
+      });
+
+      setEntradas(inTotal);
+      setSaidas(outTotal);
+      setMesesAtivos(uniqueMonths.size > 0 ? uniqueMonths.size : 1);
+
+      setChartData([
+        { name: 'Entradas', value: inTotal, color: '#0ea5e9' }, // primary
+        { name: 'Saídas', value: outTotal, color: '#991b1b' }  // danger
+      ]);
+
+      // Buscar última transação
+      const { data: latest } = await supabase
+        .from('transactions')
+        .select('*, categories(nome)')
+        .eq('user_id', user.id)
+        .eq('pendente', false)
+        .order('data', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (latest) {
+        setLatestTransaction(latest);
+      }
+
+    } catch (error) {
+      console.error("Erro ao buscar dados:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resultadoLiquido = entradas - saidas;
+
+  return (
+    <div className="space-y-6">
+      <header className="flex justify-between items-end flex-wrap gap-4">
+        <div>
+          <h2 className="text-3xl font-bold text-text">Dashboard Anual</h2>
+          <p className="text-text-light mt-1">Visão geral das suas finanças consolidadas</p>
+        </div>
+        
+        <select 
+          value={ano} 
+          onChange={(e) => setAno(e.target.value)}
+          className="glass-input cursor-pointer font-medium text-lg w-32"
+        >
+          <option value="2026">2026</option>
+          <option value="2025">2025</option>
+          <option value="2024">2024</option>
+        </select>
+      </header>
+
+      {loading ? (
+        <div className="flex justify-center p-12">
+          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* LINHA 1: TOTAIS */}
+            <div className="glass-panel p-6 flex flex-col gap-2 relative overflow-hidden group">
+              <div className="absolute top-0 left-0 w-1 h-full bg-[#10b981]"></div>
+              <div className="flex justify-between items-start">
+                <span className="text-sm font-medium text-text-light uppercase tracking-wider">Entradas do Ano</span>
+                <div className="bg-[#10b981]/10 p-2 rounded-lg text-[#10b981]">
+                  <TrendingUp size={20} />
+                </div>
+              </div>
+              <span className="text-3xl font-bold text-[#10b981] mt-2">R$ {entradas.toFixed(2).replace('.', ',')}</span>
+            </div>
+
+            <div className="glass-panel p-6 flex flex-col gap-2 relative overflow-hidden group">
+              <div className="absolute top-0 left-0 w-1 h-full bg-danger"></div>
+              <div className="flex justify-between items-start">
+                <span className="text-sm font-medium text-text-light uppercase tracking-wider">Saídas do Ano</span>
+                <div className="bg-danger/10 p-2 rounded-lg text-danger">
+                  <TrendingDown size={20} />
+                </div>
+              </div>
+              <span className="text-3xl font-bold text-danger mt-2">R$ {saidas.toFixed(2).replace('.', ',')}</span>
+            </div>
+
+            <div className="glass-panel p-6 flex flex-col gap-2 relative overflow-hidden group">
+              <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
+              <div className="flex justify-between items-start">
+                <span className="text-sm font-medium text-text-light uppercase tracking-wider">Resultado Líquido</span>
+                <div className="bg-primary/10 text-primary p-2 rounded-lg">
+                  <DollarSign size={20} />
+                </div>
+              </div>
+              <span className="text-3xl font-bold text-primary mt-2">R$ {resultadoLiquido.toFixed(2).replace('.', ',')}</span>
+            </div>
+
+            {/* LINHA 2: MÉDIAS */}
+            <div className="glass-panel p-6 flex flex-col gap-2 relative overflow-hidden group opacity-90">
+              <div className="absolute top-0 left-0 w-1 h-full bg-[#10b981]"></div>
+              <div className="flex justify-between items-start">
+                <span className="text-sm font-medium text-text-light uppercase tracking-wider">Média de Entradas</span>
+                <div className="bg-[#10b981]/10 p-2 rounded-lg text-[#10b981]">
+                  <TrendingUp size={20} />
+                </div>
+              </div>
+              <span className="text-2xl font-bold text-[#10b981] mt-2">R$ {(entradas / mesesAtivos).toFixed(2).replace('.', ',')}</span>
+              <span className="text-[10px] text-text-light uppercase">Por mês ativo</span>
+            </div>
+
+            <div className="glass-panel p-6 flex flex-col gap-2 relative overflow-hidden group opacity-90">
+              <div className="absolute top-0 left-0 w-1 h-full bg-danger"></div>
+              <div className="flex justify-between items-start">
+                <span className="text-sm font-medium text-text-light uppercase tracking-wider">Média de Saídas</span>
+                <div className="bg-danger/10 p-2 rounded-lg text-danger">
+                  <TrendingDown size={20} />
+                </div>
+              </div>
+              <span className="text-2xl font-bold text-danger mt-2">R$ {(saidas / mesesAtivos).toFixed(2).replace('.', ',')}</span>
+              <span className="text-[10px] text-text-light uppercase">Por mês ativo</span>
+            </div>
+
+            <div className="glass-panel p-6 flex flex-col gap-2 relative overflow-hidden group opacity-90">
+              <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
+              <div className="flex justify-between items-start">
+                <span className="text-sm font-medium text-text-light uppercase tracking-wider">Média do Resultado</span>
+                <div className="bg-primary/10 text-primary p-2 rounded-lg">
+                  <DollarSign size={20} />
+                </div>
+              </div>
+              <span className="text-2xl font-bold text-primary mt-2">R$ {(resultadoLiquido / mesesAtivos).toFixed(2).replace('.', ',')}</span>
+              <span className="text-[10px] text-text-light uppercase">Por mês ativo</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="glass-panel p-6 min-h-[350px] flex flex-col">
+              <h3 className="font-bold text-lg mb-4 text-text">Proporção Anual</h3>
+              <div className="flex-1 min-h-[250px]">
+                {entradas === 0 && saidas === 0 ? (
+                  <div className="h-full flex items-center justify-center text-text-light">
+                    Nenhum dado para exibir neste ano.
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={chartData}
+                        innerRadius={60}
+                        outerRadius={100}
+                        paddingAngle={5}
+                        dataKey="value"
+                      >
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => `R$ ${Number(value).toFixed(2)}`} />
+                      <Legend verticalAlign="bottom" height={36}/>
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+              
+              <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-text-light uppercase tracking-wider text-sm">Base</span>
+                  <div className="group/tooltip relative flex items-center justify-center">
+                    <Info size={16} className="text-primary cursor-help" />
+                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-2 bg-text text-white text-xs rounded-lg opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-all z-10 text-center pointer-events-none shadow-lg">
+                      A porcentagem das entradas que se tornam resultado
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-text"></div>
+                    </div>
+                  </div>
+                </div>
+                <span className={`font-bold text-lg ${entradas > 0 ? ((1 - (saidas / entradas)) * 100 >= 0 ? 'text-primary' : 'text-danger') : 'text-text-light'}`}>
+                  {entradas > 0 ? ((1 - (saidas / entradas)) * 100).toFixed(2) : '0.00'}%
+                </span>
+              </div>
+            </div>
+            
+            <div className="flex flex-col gap-6">
+              {/* Última Transação */}
+              {latestTransaction && (
+                <div className="glass-panel p-6 flex flex-col">
+                  <h3 className="font-bold text-lg text-text mb-4">Última Transação Registrada</h3>
+                  <div className="flex justify-between items-center bg-white/40 p-4 rounded-xl border border-border/50">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm font-medium text-text">{latestTransaction.data}</span>
+                      <span className="font-bold text-lg text-text">{latestTransaction.apelido || latestTransaction.nome}</span>
+                      <div className="flex gap-2 items-center mt-1">
+                        <span className="bg-background px-2 py-0.5 rounded text-[10px] uppercase font-bold text-text-light border border-border">
+                          {latestTransaction.categories?.nome || 'Sem categoria'}
+                        </span>
+                        {latestTransaction.parcela_total && (
+                          <span className="text-[10px] uppercase font-bold text-text-light">
+                            Parc {latestTransaction.parcela_atual}/{latestTransaction.parcela_total}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`font-extrabold text-xl ${latestTransaction.valor >= 0 ? 'text-primary' : 'text-danger'}`}>
+                      R$ {Number(latestTransaction.valor).toFixed(2).replace('.', ',')}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Notas */}
+              <div className="glass-panel p-6 flex-1 flex flex-col min-h-[350px]">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-lg text-text">Notas</h3>
+                  {notaSaving && (
+                    <span className="text-xs text-primary flex items-center gap-1 font-medium">
+                      <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></div> 
+                      Salvando...
+                    </span>
+                  )}
+                </div>
+                <textarea 
+                  className="glass-input flex-1 w-full p-4 resize-none bg-white/40 focus:bg-white/80 transition-colors text-sm text-text"
+                  placeholder="Escreva suas metas, lembretes ou estratégias financeiras aqui..."
+                  value={nota}
+                  onChange={(e) => setNota(e.target.value)}
+                  onBlur={(e) => saveNota(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
