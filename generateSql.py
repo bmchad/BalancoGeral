@@ -118,7 +118,7 @@ for i in range(len(csvLines)):
 
     if inReceita and label in ['Paulo', 'Larissa', 'Maria', 'Poker', 'Outros']:
         catName = 'Outras Receitas' if label == 'Outros' else label
-        for c in range(1, 13):
+        for c in range(1, 5): # aqui mudar pois só quero até, incluindo, o mês 4
             if c < len(row):
                 val = parseCurrency(row[c])
                 if val is not None and val != 0:
@@ -180,7 +180,7 @@ for i in range(len(csvLines)):
 
 sql += ',\n'.join(values) + ';'
 
-with open('seed1py.sql', 'w', encoding='utf-8') as f:
+with open('seed2py.sql', 'w', encoding='utf-8') as f:
     f.write(sql)
 
-print("SQL file generated successfully (seed1py.sql).")
+print("SQL file generated successfully (seed2py.sql).")
